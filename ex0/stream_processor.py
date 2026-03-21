@@ -3,6 +3,8 @@ from abc import ABC, abstractmethod
 
 
 class DataProcessor(ABC):
+    label: str = ""
+
     @abstractmethod
     def process(self, data: Any) -> str:
         if not self.validate(data):
@@ -18,8 +20,13 @@ class DataProcessor(ABC):
     def format_output(self, result: str) -> str:
         return f"Output: {result}"
 
+    def format_input(self, data: Any) -> str:
+        return str(data)
+
 
 class NumericProcessor(DataProcessor):
+    label: str = "Numeric data"
+
     def __str__(self) -> str:
         return "Numeric processor"
 
@@ -31,14 +38,20 @@ class NumericProcessor(DataProcessor):
         )
 
     def validate(self, data: Any) -> bool:
-        return (
-            isinstance(data, (list, tuple, set))
-            and len(data) > 0
-            and all(isinstance(x, (int, float)) for x in data)
-        )
+        if not hasattr(data, "__iter__") or not hasattr(data, "__len__"):
+            return False
+        if len(data) == 0:
+            return False
+        try:
+            sum(data)
+            return True
+        except TypeError:
+            return False
 
 
 class TextProcessor(DataProcessor):
+    label: str = "Text data"
+
     def __str__(self) -> str:
         return "Text processor"
 
@@ -51,10 +64,15 @@ class TextProcessor(DataProcessor):
         )
 
     def validate(self, data: Any) -> bool:
-        return isinstance(data, str)
+        return hasattr(data, "split") and hasattr(data, "__len__")
+
+    def format_input(self, data: Any) -> str:
+        return f'"{data}"'
 
 
 class LogProcessor(DataProcessor):
+    label: str = "Log entry"
+
     def __str__(self) -> str:
         return "Log processor"
 
@@ -63,37 +81,27 @@ class LogProcessor(DataProcessor):
         log_type: str = data.split(":")[0]
         if log_type == "ERROR":
             log_type = "ALERT"
-        elif log_type == "INFO":
-            log_type = "INFO"
         return (
             f"[{log_type}] {data.split(':')[0]} level detected: "
             f"{data.split(': ', 1)[1]}"
         )
 
     def validate(self, data: Any) -> bool:
-        return isinstance(data, str)
+        return hasattr(data, "split") and hasattr(data, "__len__")
+
+    def format_input(self, data: Any) -> str:
+        return f'"{data}"'
 
 
-def demo(processor: Any, data: Any):
+def demo(processor: DataProcessor, data: Any) -> None:
+    if not processor.label:
+        raise ValueError("Unknown processor has input")
     try:
-        type_str: str = "Empty"
-        if isinstance(processor, NumericProcessor):
-            type_str = "Numeric data"
-        elif isinstance(processor, TextProcessor):
-            type_str = "Text data"
-        elif isinstance(processor, LogProcessor):
-            type_str = "Log entry"
-        else:
-            raise ValueError("Unknown processor has input")
-        print(f"Initializing {type_str}...")
-        print("Processing data: ", end="")
-        if type_str == "Numeric data":
-            print(f"{data}")
-        elif type_str != "Empty":
-            print(f'"{data}"')
+        print(f"Initializing {processor.label}...")
+        print(f"Processing data: {processor.format_input(data)}")
         processed_data: str = processor.process(data)
         if processor.validate(data):
-            print(f"Validation: {type_str} verified")
+            print(f"Validation: {processor.label} verified")
         print(processor.format_output(processed_data))
         print()
     except ValueError as e:
@@ -105,15 +113,15 @@ def main() -> None:
     demo(NumericProcessor(), [1, 2, 3, 4, 5])
     demo(TextProcessor(), "Hello Nexus World")
     demo(LogProcessor(), "ERROR: Connection timeout")
-    print("=== Polymorphic  Processing Demo ===\n")
+    print("=== Polymorphic Processing Demo ===\n")
     print("Processing multiple data types through same interface...")
-    pairs: List[Tuple[Any, Any]] = [
+    pairs: List[Tuple[DataProcessor, Any]] = [
         (NumericProcessor(), [1, 2, 3]),
         (TextProcessor(), "Hello World!"),
         (LogProcessor(), "INFO: System ready"),
     ]
     for i, (processor, data) in enumerate(pairs, 1):
-        result = processor.process(data)
+        result: str = processor.process(data)
         print(f"Result {i}: {result}")
     print("\nFoundation systems online. Nexus ready for advanced streams.")
 
