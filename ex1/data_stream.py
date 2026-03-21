@@ -20,6 +20,9 @@ class DataStream(ABC):
 
 
 class SensorStream(DataStream):
+    def __str__(self) -> str:
+        return "Sensor Stream"
+
     def __init__(self, stream_id: str) -> None:
         super().__init__(stream_id)
 
@@ -28,14 +31,27 @@ class SensorStream(DataStream):
 
 
 class TransactionStream(DataStream):
+    def __str__(self) -> str:
+        return "Transaction Stream"
+
     def __init__(self, stream_id: str) -> None:
         super().__init__(stream_id)
 
 
 class EventStream(DataStream):
+    def __str__(self) -> str:
+        return "Event Stream"
+
     def __init__(self, stream_id: str) -> None:
         super().__init__(stream_id)
 
 
 class StreamProcessor:
-    pass
+    def __init__(self) -> None:
+        self.streams: List[DataStream] = []
+    
+    def add
+
+def demo(stream: Any, stream_id: str) -> None:
+    print(f"Initializing {stream}...")
+    print(f"Stream ID: {stream_id}
