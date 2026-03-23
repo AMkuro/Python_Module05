@@ -44,10 +44,11 @@ class NumericProcessor(DataProcessor):
         try:
             if len(data) == 0:
                 return False
-            sum(data)
-            return True
+            for value in data:
+                _ = value + 0
         except (TypeError, AttributeError):
             return False
+        return True
 
 
 class TextProcessor(DataProcessor):
@@ -65,8 +66,13 @@ class TextProcessor(DataProcessor):
         )
 
     def validate(self, data: Any) -> bool:
-        try:
-
+        match data:
+            case str():
+                if len(data) > 0:
+                    return True
+                return False
+            case _:
+                return False
 
     def format_input(self, data: Any) -> str:
         return f'"{data}"'
@@ -89,7 +95,11 @@ class LogProcessor(DataProcessor):
         )
 
     def validate(self, data: Any) -> bool:
-        return hasattr(data, "split") and hasattr(data, "__len__")
+        try:
+            level, message = data.split(": ", 1)
+        except (AttributeError, ValueError):
+            return False
+        return level in {"ERROR", "WARNING", "INFO"} and len(message) > 0
 
     def format_input(self, data: Any) -> str:
         return f'"{data}"'
