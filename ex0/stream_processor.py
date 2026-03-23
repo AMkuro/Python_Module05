@@ -33,7 +33,7 @@ class NumericProcessor(DataProcessor):
     def process(self, data: Any) -> str:
         super().process(data)
         return (
-            f"processed {len(data)} Numeric values, "
+            f"Processed {len(data)} Numeric values, "
             f"sum={sum(data)}, avg={sum(data) / len(data)}"
         )
 
