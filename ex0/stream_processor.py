@@ -7,11 +7,7 @@ class DataProcessor(ABC):
 
     @abstractmethod
     def process(self, data: Any) -> str:
-        if not self.validate(data):
-            raise ValueError(
-                f"[{self.__class__.__name__}] Validation failed for "
-                f"{type(data).__name__}: {data!r}"
-            )
+        pass
 
     @abstractmethod
     def validate(self, data: Any) -> bool:
@@ -23,6 +19,13 @@ class DataProcessor(ABC):
     def format_input(self, data: Any) -> str:
         return str(data)
 
+    def ensure_validate(self, data: Any) -> None:
+        if not self.validate(data):
+            raise ValueError(
+                f"[{self.__class__.__name__}] Validation failed for "
+                f"{type(data).__name__}: {data!r}"
+            )
+
 
 class NumericProcessor(DataProcessor):
     label: str = "Numeric data"
@@ -31,21 +34,19 @@ class NumericProcessor(DataProcessor):
         return "Numeric processor"
 
     def process(self, data: Any) -> str:
-        super().process(data)
+        super().ensure_validate(data)
         return (
             f"Processed {len(data)} Numeric values, "
             f"sum={sum(data)}, avg={sum(data) / len(data)}"
         )
 
     def validate(self, data: Any) -> bool:
-        if not hasattr(data, "__iter__") or not hasattr(data, "__len__"):
-            return False
-        if len(data) == 0:
-            return False
         try:
+            if len(data) == 0:
+                return False
             sum(data)
             return True
-        except TypeError:
+        except (TypeError, AttributeError):
             return False
 
 
@@ -56,7 +57,7 @@ class TextProcessor(DataProcessor):
         return "Text processor"
 
     def process(self, data: Any) -> str:
-        super().process(data)
+        super().ensure_validate(data)
         word_count: int = len(data.split())
         return (
             f"Processed text: {len(data)} characters, "
@@ -64,7 +65,8 @@ class TextProcessor(DataProcessor):
         )
 
     def validate(self, data: Any) -> bool:
-        return hasattr(data, "split") and hasattr(data, "__len__")
+        try:
+
 
     def format_input(self, data: Any) -> str:
         return f'"{data}"'
@@ -77,7 +79,7 @@ class LogProcessor(DataProcessor):
         return "Log processor"
 
     def process(self, data: Any) -> str:
-        super().process(data)
+        super().ensure_validate(data)
         log_type: str = data.split(":")[0]
         if log_type == "ERROR":
             log_type = "ALERT"
