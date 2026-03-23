@@ -1,4 +1,4 @@
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 from abc import ABC, abstractmethod
 
 
@@ -86,11 +86,13 @@ class LogProcessor(DataProcessor):
 
     def process(self, data: Any) -> str:
         super().ensure_validate(data)
-        log_type: str = data.split(":")[0]
-        if log_type == "ERROR":
-            log_type = "ALERT"
+        level_display: Dict[str, str] = {
+            "ERROR": "ALERT",
+        }
+        original_level: str = data.split(":")[0]
+        display_level: str = level_display.get(original_level, "Unknown")
         return (
-            f"[{log_type}] {data.split(':')[0]} level detected: "
+            f"[{display_level}] {original_level} level detected: "
             f"{data.split(': ', 1)[1]}"
         )
 
@@ -122,9 +124,12 @@ def demo(processor: DataProcessor, data: Any) -> None:
 
 def main() -> None:
     print("=== CODE NEXUS - DATA PROCESSOR FOUNDATION ===\n")
-    demo(NumericProcessor(), [1, 2, 3, 4, 5])
-    demo(TextProcessor(), "Hello Nexus World")
-    demo(LogProcessor(), "ERROR: Connection timeout")
+    try:
+        demo(NumericProcessor(), [1, 2, 3, 4, 5])
+        demo(TextProcessor(), "Hello Nexus World")
+        demo(LogProcessor(), "ERROR: Connection timeout")
+    except ValueError as e:
+        print(e)
     print("=== Polymorphic Processing Demo ===\n")
     print("Processing multiple data types through same interface...")
     pairs: List[Tuple[DataProcessor, Any]] = [
@@ -133,8 +138,11 @@ def main() -> None:
         (LogProcessor(), "INFO: System ready"),
     ]
     for i, (processor, data) in enumerate(pairs, 1):
-        result: str = processor.process(data)
-        print(f"Result {i}: {result}")
+        try:
+            result: str = processor.process(data)
+            print(f"Result {i}: {result}")
+        except ValueError as e:
+            print(e)
     print("\nFoundation systems online. Nexus ready for advanced streams.")
 
 
