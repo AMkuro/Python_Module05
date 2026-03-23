@@ -88,6 +88,7 @@ class LogProcessor(DataProcessor):
         super().ensure_validate(data)
         level_display: Dict[str, str] = {
             "ERROR": "ALERT",
+            "INFO" : "INFO",
         }
         original_level: str = data.split(":")[0]
         display_level: str = level_display.get(original_level, "Unknown")
