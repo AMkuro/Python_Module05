@@ -8,10 +8,11 @@ class DataStream(ABC):
     def __init__(self, stream_id: str, stream_type: str) -> None:
         self.stream_id: str = stream_id
         self.stream_type: str = stream_type
+        self.data_count: int = 0
 
     @abstractmethod
     def process_batch(self, data_batch: List[Any]) -> str:
-        self.data_count: int = len(data_batch)
+        self.data_count = len(data_batch)
 
     def filter_data(
         self, data_batch: List[Any], criteria: Optional[str] = None
@@ -213,11 +214,11 @@ def demo_individual_streams() -> None:
             f"Processing {stream.name.lower()} batch:"
             f" [{', '.join(data for data in data_batch)}]"
         )
-        BASE_KEYS: set[str] = {"stream_id", "stream_type", "processed_data"}
+        base_keys: set[str] = {"stream_id", "stream_type", "processed_data"}
         stats: Dict[str, Union[str, int, float]] = stream.get_stats()
         extras: List[str] = []
         for key, value in stats.items():
-            if key not in BASE_KEYS:
+            if key not in base_keys:
                 if isinstance(value, str):
                     extras.append(f"{key.replace('_', ' ')}: {value}")
                 else:
