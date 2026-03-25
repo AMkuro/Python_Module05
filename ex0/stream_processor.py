@@ -16,9 +16,6 @@ class DataProcessor(ABC):
     def format_output(self, result: str) -> str:
         return f"Output: {result}"
 
-    def format_input(self, data: Any) -> str:
-        return str(data)
-
     def ensure_validate(self, data: Any) -> None:
         if not self.validate(data):
             raise ValueError(
@@ -30,9 +27,6 @@ class DataProcessor(ABC):
 class NumericProcessor(DataProcessor):
     label: str = "Numeric data"
 
-    def __str__(self) -> str:
-        return "Numeric processor"
-
     def process(self, data: Any) -> str:
         super().ensure_validate(data)
         return (
@@ -41,21 +35,18 @@ class NumericProcessor(DataProcessor):
         )
 
     def validate(self, data: Any) -> bool:
-        try:
-            if len(data) == 0:
-                return False
-            for value in data:
-                _ = value + 0
-        except (TypeError, AttributeError):
+        if type(data) not in (list, tuple):
             return False
+        if len(data) == 0:
+            return False
+        for value in data:
+            if type(value) not in (int, float):
+                return False
         return True
 
 
 class TextProcessor(DataProcessor):
     label: str = "Text data"
-
-    def __str__(self) -> str:
-        return "Text processor"
 
     def process(self, data: Any) -> str:
         super().ensure_validate(data)
@@ -66,29 +57,18 @@ class TextProcessor(DataProcessor):
         )
 
     def validate(self, data: Any) -> bool:
-        match data:
-            case str():
-                if len(data) > 0:
-                    return True
-                return False
-            case _:
-                return False
-
-    def format_input(self, data: Any) -> str:
-        return f'"{data}"'
+        return type(data) is str and len(data) > 0
 
 
 class LogProcessor(DataProcessor):
     label: str = "Log entry"
 
-    def __str__(self) -> str:
-        return "Log processor"
-
     def process(self, data: Any) -> str:
         super().ensure_validate(data)
         level_display: Dict[str, str] = {
             "ERROR": "ALERT",
-            "INFO" : "INFO",
+            "INFO": "INFO",
+            "WARNING": "ALERT",
         }
         original_level: str = data.split(":")[0]
         display_level: str = level_display.get(original_level, "Unknown")
@@ -104,21 +84,17 @@ class LogProcessor(DataProcessor):
             return False
         return level in {"ERROR", "WARNING", "INFO"} and len(message) > 0
 
-    def format_input(self, data: Any) -> str:
-        return f'"{data}"'
-
 
 def demo(processor: DataProcessor, data: Any) -> None:
     if not processor.label:
         raise ValueError("Unknown processor has input")
     try:
         print(f"Initializing {processor.label}...")
-        print(f"Processing data: {processor.format_input(data)}")
+        print(f"Processing data: {data!r}")
         processed_data: str = processor.process(data)
         if processor.validate(data):
             print(f"Validation: {processor.label} verified")
-        print(processor.format_output(processed_data))
-        print()
+        print(processor.format_output(processed_data), "\n")
     except ValueError as e:
         print(e, "\n")
 
