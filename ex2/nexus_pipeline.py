@@ -3,6 +3,7 @@ from typing import Any, List, Dict, Protocol, Union, Optional
 import collections
 import json
 import logging
+import math
 import random
 import sys
 import time
@@ -77,7 +78,7 @@ class ProcessingPipeline(ABC):
     def _processing_stage(self, data: Any, index: int) -> Any:
         try:
             state: Any = self.stages[index].process(data)
-        except (ValueError, KeyError) as e:
+        except (ValueError, KeyError, TypeError) as e:
             raise ValueError(f"Stage {index + 1}: {e}")
         return state
 
@@ -107,22 +108,50 @@ class JSONAdapter(ProcessingPipeline):
         "pressure": "atmospheric pressure",
         "co2": "CO2 concentration",
     }
+    _sensor_units: Dict[str, set[str]] = {
+        "temp": {"C", "F", "K"},
+        "humidity": {"%"},
+        "pressure": {"hPa", "Pa", "kPa"},
+        "co2": {"ppm"},
+    }
+
+    def _validate_number(self, value: Any, field_name: str) -> None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{field_name} must be numeric.")
+        if not math.isfinite(float(value)):
+            raise ValueError(f"{field_name} must be finite.")
 
     def _validate(self, parsed: List[Any]) -> None:
         for record in parsed:
+            if not isinstance(record, dict):
+                raise ValueError(f"Record must be an object, got {type(record)}")
             for key in ("sensor", "value", "unit"):
                 if key not in record:
                     raise ValueError(f"Missing required key: {key}")
-            if not isinstance(record["value"], (int, float)):
+            sensor = record["sensor"]
+            if not isinstance(sensor, str) or sensor not in self._sensor_labels:
                 raise ValueError(
-                    f"value must be numeric, got {type(record['value'])}."
+                    f"Unknown sensor: {sensor!r}."
+                    f" Valid sensors: {list(self._sensor_labels)}"
+                )
+            self._validate_number(record["value"], "value")
+            unit = record["unit"]
+            if not isinstance(unit, str) or unit not in self._valid_units:
+                raise ValueError(
+                    f"Unknown unit: {unit!r}."
                     f" Valid units: {list(self._valid_units)}"
                 )
-            if record["unit"] not in self._valid_units:
+            if unit not in self._sensor_units[sensor]:
                 raise ValueError(
-                    f"Unknown unit: {record['unit']}."
-                    f" Valid units: {list(self._valid_units)}"
+                    f"Unit {unit!r} is not valid for sensor {sensor!r}."
                 )
+
+    def _log_input(self, data: Dict[str, Any]) -> None:
+        try:
+            payload = json.dumps(data)
+        except (TypeError, ValueError):
+            payload = repr(data)
+        logger.info("Input: %s", payload)
 
     def _make_summary(self, state: Dict[str, Any]) -> str:
         data: Dict[str, Any] = state["raw"]
@@ -137,7 +166,7 @@ class JSONAdapter(ProcessingPipeline):
 
     def process(self, data: Any) -> Union[str, Any]:
         super().process(data)
-        logger.info("Input: %s", json.dumps(data))
+        self._log_input(data)
         parsed: List[Any] = [data]
         state: Dict[str, Any] = {
             "raw": data,
@@ -196,6 +225,61 @@ class CSVAdapter(ProcessingPipeline):
             )
         return schema
 
+    def _validate_number(self, value: str, field_name: str) -> None:
+        if value.strip() == "":
+            raise ValueError(f"{field_name} must not be empty")
+        try:
+            number = float(value)
+        except ValueError as exc:
+            raise ValueError(f"{field_name} must be numeric") from exc
+        if not math.isfinite(number):
+            raise ValueError(f"{field_name} must be finite")
+
+    def _validate_text(self, value: str, field_name: str) -> None:
+        if value.strip() == "":
+            raise ValueError(f"{field_name} must not be empty")
+
+    def _validate_sensor_record(self, record: Dict[str, str]) -> None:
+        sensor = record["sensor"].strip()
+        unit = record["unit"].strip()
+        if sensor not in JSONAdapter._sensor_labels:
+            raise ValueError(
+                f"Unknown sensor: {sensor!r}. "
+                f"Valid sensors: {list(JSONAdapter._sensor_labels)}"
+            )
+        self._validate_number(record["value"], "value")
+        if unit not in JSONAdapter._valid_units:
+            raise ValueError(
+                f"Unknown unit: {unit!r}. "
+                f"Valid units: {list(JSONAdapter._valid_units)}"
+            )
+        if unit not in JSONAdapter._sensor_units[sensor]:
+            raise ValueError(
+                f"Unit {unit!r} is not valid for sensor {sensor!r}."
+            )
+
+    def _validate_activity_record(self, record: Dict[str, str]) -> None:
+        for field in ("user", "action", "timestamp"):
+            self._validate_text(record[field], field)
+
+    def _validate_transaction_record(self, record: Dict[str, str]) -> None:
+        self._validate_text(record["product"], "product")
+        self._validate_number(record["price"], "price")
+        self._validate_number(record["quantity"], "quantity")
+
+    def _validate(self, records: List[Dict[str, str]]) -> None:
+        if not records:
+            raise ValueError("CSV contains no records")
+        schema = self._detect_schema(list(records[0].keys()))
+        validators = {
+            "activity": self._validate_activity_record,
+            "sensor": self._validate_sensor_record,
+            "transaction": self._validate_transaction_record,
+        }
+        validator = validators[schema]
+        for record in records:
+            validator(record)
+
     def _make_summary(self, state: Dict[str, Any]) -> str:
         count: int = state["metadata"]["record_count"]
         records: List[Dict[str, str]] = state["data"]
@@ -219,7 +303,7 @@ class CSVAdapter(ProcessingPipeline):
             "raw": data,
             "data": parsed,
             "metadata": {},
-            "validator": None,
+            "validator": self._validate,
             "summary_fn": self._make_summary,
         }
         state = self._processing_stage(state, 0)
@@ -258,11 +342,16 @@ class StreamAdapter(ProcessingPipeline):
                     f" Valid keys: {list(self._valid_keys)}"
                 )
             try:
-                records.append({"key": key, "value": float(value)})
+                number = float(value)
             except ValueError:
                 raise ValueError(
                     f"Stream value must be numeric: {value!r} in {item!r}"
                 )
+            if not math.isfinite(number):
+                raise ValueError(
+                    f"Stream value must be finite: {value!r} in {item!r}"
+                )
+            records.append({"key": key, "value": number})
         return records
 
     def _make_summary(self, state: Dict[str, Any]) -> str:
