@@ -1,4 +1,5 @@
-from typing import Any, List, Dict, Tuple, Union, Optional  # noqa
+import math
+from typing import Any, List, Dict, Tuple, Union, Optional
 from abc import ABC, abstractmethod
 
 
@@ -12,14 +13,18 @@ class DataStream(ABC):
 
     @abstractmethod
     def process_batch(self, data_batch: List[Any]) -> str:
-        self.data_count = len(data_batch)
+        self._require_batch(data_batch)
+        self.data_count = 0
+
+    def _require_batch(self, data_batch: Any) -> List[Any]:
+        if not isinstance(data_batch, list):
+            raise TypeError("data_batch must be a list")
+        return data_batch
 
     def filter_data(
         self, data_batch: List[Any], criteria: Optional[str] = None
     ) -> List[Any]:
-        if criteria:
-            pass
-        return data_batch
+        return self._require_batch(data_batch)
 
     def filter_label(self, count: int) -> str:
         return f"{count} filtered item{'s' if count > 1 else ''}"
@@ -45,18 +50,23 @@ class SensorStream(DataStream):
             return None
         parts = item.split(":")
         if len(parts) == 2 and parts[0] == "temp":
-            return float(parts[1])
+            temp = float(parts[1])
+            if math.isfinite(temp):
+                return temp
         return None
 
     def process_batch(self, data_batch: List[Any]) -> str:
         super().process_batch(data_batch)
+        valid_temps: List[float] = []
         for data in data_batch:
             try:
                 t: Optional[float] = self._parse_temp(data)
                 if t is not None:
-                    self._temps.append(t)
+                    valid_temps.append(t)
             except ValueError:
                 pass
+        self._temps.extend(valid_temps)
+        self.data_count = len(valid_temps)
         if self._temps:
             self._avg_temp = sum(self._temps) / len(self._temps)
         return f"{self.data_count} readings processed"
@@ -66,8 +76,12 @@ class SensorStream(DataStream):
     ) -> List[Any]:
         if criteria == "High-priority":
             result: List[float] = []
-            for temp in self._temps:
-                if temp > 30.0:
+            for item in self._require_batch(data_batch):
+                try:
+                    temp = self._parse_temp(item)
+                except ValueError:
+                    continue
+                if temp is not None and temp > 30.0:
                     result.append(temp)
             return result
         return super().filter_data(data_batch, criteria)
@@ -94,22 +108,27 @@ class TransactionStream(DataStream):
             return None
         parts: List[str] = item.split(":")
         if len(parts) == 2 and parts[0] in ("buy", "sell"):
-            return (parts[0], int(parts[1]))
+            amount = int(parts[1])
+            if amount >= 0:
+                return (parts[0], amount)
         return None
 
     def process_batch(self, data_batch: List[Any]) -> str:
         super().process_batch(data_batch)
         net: int = 0
+        valid_amounts: List[int] = []
         for item in data_batch:
             try:
                 op: Optional[Tuple[str, int]] = self._parse_operation(item)
                 if op is not None:
                     optype, amount = op
                     temp: int = amount if optype == "buy" else -amount
-                    self._amounts.append(temp)
+                    valid_amounts.append(temp)
                     net += temp
             except ValueError:
                 pass
+        self._amounts.extend(valid_amounts)
+        self.data_count = len(valid_amounts)
         self._net_flow += net
         return f"{self.data_count} operations processed"
 
@@ -117,10 +136,18 @@ class TransactionStream(DataStream):
         self, data_batch: List[Any], criteria: Optional[str] = None
     ) -> List[Any]:
         if criteria == "High-priority":
-            result: List[float] = []
-            for amount in self._amounts:
-                if amount > 200:
-                    result.append(amount)
+            result: List[int] = []
+            for item in self._require_batch(data_batch):
+                try:
+                    op = self._parse_operation(item)
+                except ValueError:
+                    continue
+                if op is None:
+                    continue
+                optype, amount = op
+                signed_amount = amount if optype == "buy" else -amount
+                if signed_amount > 200:
+                    result.append(signed_amount)
             return result
         return super().filter_data(data_batch, criteria)
 
@@ -145,11 +172,13 @@ class EventStream(DataStream):
 
     def process_batch(self, data_batch: List[Any]) -> str:
         super().process_batch(data_batch)
-        error_count = sum(
-            1
-            for item in data_batch
-            if isinstance(item, str) and item == "error"
-        )
+        valid_events = [
+            item
+            for item in self._require_batch(data_batch)
+            if isinstance(item, str)
+        ]
+        error_count = sum(1 for item in valid_events if item == "error")
+        self.data_count = len(valid_events)
         self._event_errors += error_count
         return f"{self.data_count} events processed"
 
@@ -181,6 +210,8 @@ class StreamProcessor:
         self.streams.append(stream)
 
     def process_stream(self, batches: List[List[Any]]) -> List[Any]:
+        if len(self.streams) != len(batches):
+            raise ValueError("stream count and batch count must match")
         return [
             stream.process_batch(batch_data)
             for stream, batch_data in zip(self.streams, batches)
@@ -189,6 +220,8 @@ class StreamProcessor:
     def filter_stream(
         self, batches: List[List[Any]], criteria: Optional[str] = None
     ) -> List[Any]:
+        if len(self.streams) != len(batches):
+            raise ValueError("stream count and batch count must match")
         return [
             stream.filter_data(batch, criteria)
             for stream, batch in zip(self.streams, batches)
