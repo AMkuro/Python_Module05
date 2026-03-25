@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Any, List, Dict, Protocol, Union, Optional  # noqa
-import collections  # noqa
+from typing import Any, List, Dict, Protocol, Union, Optional
+import collections
 import json
 import logging
+import random
 import sys
-from datetime import datetime  # noqa
+import time
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,12 @@ class InputStage:
     def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
         if not data["data"]:
             raise ValueError("Data is empty.")
-        logger.debug("InputStage: %d records received", len(data["data"]))
+        validator = data.get("validator")
+        if validator is not None:
+            validator(data["data"])
+        logger.debug(
+            "[DEBUG] InputStage: %d records received", len(data["data"])
+        )
         return data
 
 
@@ -35,7 +42,7 @@ class TransformStage:
             r["key"] for r in data["data"] if "key" in r
         )
         logger.debug(
-            "TransformStage: %d records, type_counts=%s",
+            "[DEBUG] TransformStage: %d records, type_counts=%s",
             data["metadata"]["record_count"],
             data["metadata"]["type_counts"],
         )
@@ -47,7 +54,8 @@ class OutputStage:
         return "Output formatting and delivery"
 
     def process(self, data: Dict[str, Any]) -> str:
-        logger.debug("OutputStage: %s", data["summary"])
+        data["summary"] = data["summary_fn"](data)
+        logger.debug("[DEBUG] OutputStage: %s", data["summary"])
         return str(data["summary"])
 
 
@@ -69,7 +77,7 @@ class ProcessingPipeline(ABC):
     def _processing_stage(self, data: Any, index: int) -> Any:
         try:
             state: Any = self.stages[index].process(data)
-        except Exception as e:  # TODO:Narrow down the exception types.
+        except (ValueError, KeyError) as e:
             raise ValueError(f"Stage {index + 1}: {e}")
         return state
 
@@ -83,8 +91,24 @@ class JSONAdapter(ProcessingPipeline):
         self.add_stage(TransformStage())
         self.add_stage(OutputStage())
 
+    _valid_units: Dict[str, str] = {
+        "C": "°C",
+        "F": "°F",
+        "K": "K",
+        "%": "%",
+        "hPa": "hPa",
+        "Pa": "Pa",
+        "kPa": "kPa",
+        "ppm": "ppm",
+    }
+    _sensor_labels: Dict[str, str] = {
+        "temp": "temperature",
+        "humidity": "humidity",
+        "pressure": "atmospheric pressure",
+        "co2": "CO2 concentration",
+    }
+
     def _validate(self, parsed: List[Any]) -> None:
-        valid_units: set[str] = {"C", "%", "hPa", "F"}
         for record in parsed:
             for key in ("sensor", "value", "unit"):
                 if key not in record:
@@ -92,32 +116,39 @@ class JSONAdapter(ProcessingPipeline):
             if not isinstance(record["value"], (int, float)):
                 raise ValueError(
                     f"value must be numeric, got {type(record['value'])}."
-                    f" {', '.join(valid_units)} are valid unit."
+                    f" Valid units: {list(self._valid_units)}"
                 )
-            if record["unit"] not in valid_units:
-                raise ValueError(f"Unknown unit: {record['unit']}")
+            if record["unit"] not in self._valid_units:
+                raise ValueError(
+                    f"Unknown unit: {record['unit']}."
+                    f" Valid units: {list(self._valid_units)}"
+                )
+
+    def _make_summary(self, state: Dict[str, Any]) -> str:
+        data: Dict[str, Any] = state["raw"]
+        unit: str = str(data["unit"])
+        unit_display: str = self._valid_units.get(unit, unit)
+        sensor_key: str = str(data["sensor"])
+        sensor: str = self._sensor_labels.get(sensor_key, sensor_key)
+        return (
+            f"Processed {sensor} reading: "
+            f"{data['value']}{unit_display} (Normal range)"
+        )
 
     def process(self, data: Any) -> Union[str, Any]:
         super().process(data)
         logger.info("Input: %s", json.dumps(data))
         parsed: List[Any] = [data]
-        self._validate(parsed)
-        state: Dict[str, Any] = {"raw": data, "data": parsed, "metadata": {}}
+        state: Dict[str, Any] = {
+            "raw": data,
+            "data": parsed,
+            "metadata": {},
+            "validator": self._validate,
+            "summary_fn": self._make_summary,
+        }
         state = self._processing_stage(state, 0)
         state = self._processing_stage(state, 1)
         logger.info("Transform: Enriched with metadata and validation")
-        unit = data["unit"]
-        unit_display = f"°{unit}" if unit in ("C", "F") else unit
-        sensor_labels: Dict[str, str] = {
-            "temp": "temperature",
-            "humidity": "humidity",
-            "pressure": "atmospheric pressure",
-        }
-        sensor = sensor_labels.get(data["sensor"], data["sensor"])
-        state["summary"] = (
-            f"Processed {sensor} reading: "
-            f"{data['value']}{unit_display} (Normal range)"
-        )
         return self._processing_stage(state, 2)
 
 
@@ -149,17 +180,51 @@ class CSVAdapter(ProcessingPipeline):
             records.append(dict(zip(headers, values)))
         return records
 
+    _known_schemas: Dict[str, str] = {
+        "user,action,timestamp": "activity",
+        "sensor,value,unit": "sensor",
+        "product,price,quantity": "transaction",
+    }
+
+    def _detect_schema(self, columns: List[str]) -> str:
+        key: str = ",".join(columns)
+        schema: Optional[str] = self._known_schemas.get(key)
+        if schema is None:
+            raise ValueError(
+                f"Unknown CSV schema: {columns}.Known schemas:"
+                f" {[k.split(',') for k in self._known_schemas]}"
+            )
+        return schema
+
+    def _make_summary(self, state: Dict[str, Any]) -> str:
+        count: int = state["metadata"]["record_count"]
+        records: List[Dict[str, str]] = state["data"]
+        columns: List[str] = list(records[0].keys()) if records else []
+        schema: str = self._detect_schema(columns)
+
+        if schema == "activity":
+            return f"User activity logged: {count} actions processed"
+        if schema == "sensor":
+            return f"Sensor log: {count} record(s) processed"
+        if schema == "transaction":
+            return f"Transaction log: {count} record(s) processed"
+        return f"CSV: {count} record(s) processed"
+
     def process(self, data: Any) -> Union[str, Any]:
         super().process(data)
         header = data.split("\n")[0]
         logger.info('Input: "%s"', header)
         parsed = self._parse(data)
-        state: Dict[str, Any] = {"raw": data, "data": parsed, "metadata": {}}
+        state: Dict[str, Any] = {
+            "raw": data,
+            "data": parsed,
+            "metadata": {},
+            "validator": None,
+            "summary_fn": self._make_summary,
+        }
         state = self._processing_stage(state, 0)
         state = self._processing_stage(state, 1)
         logger.info("Transform: Parsed and structured data")
-        count = state["metadata"]["record_count"]
-        state["summary"] = f"User activity logged: {count} actions processed"
         return self._processing_stage(state, 2)
 
 
@@ -172,6 +237,12 @@ class StreamAdapter(ProcessingPipeline):
         self.add_stage(TransformStage())
         self.add_stage(OutputStage())
 
+    _valid_keys: Dict[str, str] = {
+        "temp": "°C",
+        "humidity": "%",
+        "pressure": "hPa",
+    }
+
     def _parse(self, data: List[Any]) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []
         for item in data:
@@ -181,6 +252,11 @@ class StreamAdapter(ProcessingPipeline):
                     " (expected 'key:value')"
                 )
             key, value = item.split(":", 1)
+            if key not in self._valid_keys:
+                raise ValueError(
+                    f"Unknown stream key: {key!r}."
+                    f" Valid keys: {list(self._valid_keys)}"
+                )
             try:
                 records.append({"key": key, "value": float(value)})
             except ValueError:
@@ -189,19 +265,42 @@ class StreamAdapter(ProcessingPipeline):
                 )
         return records
 
+    def _make_summary(self, state: Dict[str, Any]) -> str:
+        records: List[Dict[str, Any]] = state["data"]
+        count: int = state["metadata"]["record_count"]
+        type_counts: collections.Counter[str] = state["metadata"][
+            "type_counts"
+        ]
+
+        if len(type_counts) == 1:
+            key: str = next(iter(type_counts))
+            avg: float = sum(r["value"] for r in records) / count
+            unit: str = self._valid_keys.get(key, "")
+            return f"Stream summary: {count} readings, avg: {avg:.1f}{unit}"
+
+        parts: List[str] = []
+        for k, k_count in type_counts.items():
+            k_avg: float = (
+                sum(r["value"] for r in records if r["key"] == k) / k_count
+            )
+            k_unit: str = self._valid_keys.get(k, "")
+            parts.append(f"{k}: {k_count} (avg {k_avg:.1f}{k_unit})")
+        return f"Stream summary: {count} readings — {', '.join(parts)}"
+
     def process(self, data: Any) -> Union[str, Any]:
         super().process(data)
         logger.info("Input: Real-time sensor stream")
         parsed = self._parse(data)
-        state: Dict[str, Any] = {"raw": data, "data": parsed, "metadata": {}}
+        state: Dict[str, Any] = {
+            "raw": data,
+            "data": parsed,
+            "metadata": {},
+            "validator": None,
+            "summary_fn": self._make_summary,
+        }
         state = self._processing_stage(state, 0)
         state = self._processing_stage(state, 1)
         logger.info("Transform: Aggregated and filtered")
-        count = state["metadata"]["record_count"]
-        avg = sum(r["value"] for r in state["data"]) / count
-        state["summary"] = (
-            f"Stream summary: {count} readings, avg: {avg:.1f}°C"
-        )
         return self._processing_stage(state, 2)
 
 
@@ -235,7 +334,7 @@ class NexusManager:
         try:
             pipeline: ProcessingPipeline = self.route(data)
             return pipeline.process(data)
-        except Exception as e:  # TODO: Narrow down the exception types.
+        except ValueError as e:
             logger.error("Error detected in %s", e)
             logger.info("Recovery initiated: Switching to backup processor")
             try:
@@ -297,10 +396,33 @@ def demo_pipeline_system() -> None:
     logger.info("=== Pipeline Chaining Demo ===")
     logger.info("Pipeline A -> Pipeline B -> Pipeline C")
     logger.info("Data flow: Raw -> Processed -> Analyzed -> Stored\n")
-    logger.info("Chain result: 100 records processed through 3-stage pipeline")
-    logger.info(
-        "Performance: %d%% efficiency, 0.2s total processing time\n", 95
+
+    class _DebugOnly(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return record.levelno == logging.DEBUG
+
+    root_handler = logging.getLogger().handlers[0]
+    debug_filter = _DebugOnly()
+    logging.getLogger().setLevel(logging.DEBUG)
+    root_handler.addFilter(debug_filter)
+
+    chain_start: float = time.time()
+    stream_data: List[str] = (
+        [f"temp:{random.uniform(15.0, 35.0):.1f}" for _ in range(334)]
+        + [f"humidity:{random.uniform(30.0, 90.0):.1f}" for _ in range(333)]
+        + [f"pressure:{random.uniform(980.0, 1030.0):.1f}" for _ in range(333)]
     )
+    pipeline: ProcessingPipeline = StreamAdapter("chain_stream")
+    pipeline.process(stream_data)
+
+    chain_elapsed: float = (time.time() - chain_start) * 1000
+    root_handler.removeFilter(debug_filter)
+    logging.getLogger().setLevel(logging.INFO)
+    logger.info(
+        "Chain result: %d records processed through 3-stage pipeline",
+        len(stream_data),
+    )
+    logger.info("Performance: %.2f ms total processing time\n", chain_elapsed)
 
     logger.info("=== Error Recovery Test ===")
     logger.info("Simulating pipeline failure...")
