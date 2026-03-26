@@ -26,9 +26,7 @@ class InputStage:
         validator = data.get("validator")
         if validator is not None:
             validator(data["data"])
-        logger.debug(
-            "[DEBUG] InputStage: %d records received", len(data["data"])
-        )
+        logger.debug("InputStage: %d records received", len(data["data"]))
         return data
 
 
@@ -43,7 +41,7 @@ class TransformStage:
             r["key"] for r in data["data"] if "key" in r
         )
         logger.debug(
-            "[DEBUG] TransformStage: %d records, type_counts=%s",
+            "TransformStage: %d records, type_counts=%s",
             data["metadata"]["record_count"],
             data["metadata"]["type_counts"],
         )
@@ -56,7 +54,7 @@ class OutputStage:
 
     def process(self, data: Dict[str, Any]) -> str:
         data["summary"] = data["summary_fn"](data)
-        logger.debug("[DEBUG] OutputStage: %s", data["summary"])
+        logger.debug("OutputStage: %s", data["summary"])
         return str(data["summary"])
 
 
@@ -124,12 +122,17 @@ class JSONAdapter(ProcessingPipeline):
     def _validate(self, parsed: List[Any]) -> None:
         for record in parsed:
             if not isinstance(record, dict):
-                raise ValueError(f"Record must be an object, got {type(record)}")
+                raise ValueError(
+                    f"Record must be an dict object, got {type(record)}"
+                )
             for key in ("sensor", "value", "unit"):
                 if key not in record:
                     raise ValueError(f"Missing required key: {key}")
             sensor = record["sensor"]
-            if not isinstance(sensor, str) or sensor not in self._sensor_labels:
+            if (
+                not isinstance(sensor, str)
+                or sensor not in self._sensor_labels
+            ):
                 raise ValueError(
                     f"Unknown sensor: {sensor!r}."
                     f" Valid sensors: {list(self._sensor_labels)}"
@@ -225,19 +228,18 @@ class CSVAdapter(ProcessingPipeline):
             )
         return schema
 
-    def _validate_number(self, value: str, field_name: str) -> None:
+    def _validate_text(self, value: str, field_name: str) -> None:
         if value.strip() == "":
             raise ValueError(f"{field_name} must not be empty")
+
+    def _validate_number(self, value: str, field_name: str) -> None:
+        self._validate_text(value, field_name)
         try:
             number = float(value)
         except ValueError as exc:
             raise ValueError(f"{field_name} must be numeric") from exc
         if not math.isfinite(number):
             raise ValueError(f"{field_name} must be finite")
-
-    def _validate_text(self, value: str, field_name: str) -> None:
-        if value.strip() == "":
-            raise ValueError(f"{field_name} must not be empty")
 
     def _validate_sensor_record(self, record: Dict[str, str]) -> None:
         sensor = record["sensor"].strip()
@@ -454,9 +456,10 @@ class NexusManager:
 
 
 def demo_pipeline_system() -> None:
-    logger.info("=== CODE NEXUS - ENTERPRISE PIPELINE SYSTEM ===\n")
+    print("=== CODE NEXUS - ENTERPRISE PIPELINE SYSTEM ===\n")
     logger.info("%s", manager := NexusManager())
-    logger.info("\nCreating Data Processing Pipeline...")
+    print()
+    logger.info("Creating Data Processing Pipeline...")
     stages: List[ProcessingStage] = [
         InputStage(),
         TransformStage(),
@@ -464,7 +467,7 @@ def demo_pipeline_system() -> None:
     ]
     for i, stage in enumerate(stages, 1):
         logger.info("Stage %d: %s", i, stage)
-    logger.info("\n=== Multi-Format Data Processing ===\n")
+    print("\n=== Multi-Format Data Processing ===\n")
     pipelines: Dict[str, ProcessingPipeline] = {
         "json": JSONAdapter("sensor_data_json"),
         "csv": CSVAdapter("process_data_log"),
@@ -482,46 +485,41 @@ def demo_pipeline_system() -> None:
         result = manager.process_data(data)
         logger.info("Output: %s\n", result)
 
-    logger.info("=== Pipeline Chaining Demo ===")
-    logger.info("Pipeline A -> Pipeline B -> Pipeline C")
-    logger.info("Data flow: Raw -> Processed -> Analyzed -> Stored\n")
+    print("=== Pipeline Chaining Demo ===")
+    print("Pipeline A -> Pipeline B -> Pipeline C")
+    print("Data flow: Raw -> Processed -> Analyzed -> Stored\n")
 
-    class _DebugOnly(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            return record.levelno == logging.DEBUG
-
-    root_handler = logging.getLogger().handlers[0]
-    debug_filter = _DebugOnly()
     logging.getLogger().setLevel(logging.DEBUG)
-    root_handler.addFilter(debug_filter)
 
-    chain_start: float = time.time()
+    chain_start: float = time.perf_counter()
     stream_data: List[str] = (
         [f"temp:{random.uniform(15.0, 35.0):.1f}" for _ in range(334)]
         + [f"humidity:{random.uniform(30.0, 90.0):.1f}" for _ in range(333)]
         + [f"pressure:{random.uniform(980.0, 1030.0):.1f}" for _ in range(333)]
     )
-    pipeline: ProcessingPipeline = StreamAdapter("chain_stream")
-    pipeline.process(stream_data)
+    pipeline_chain: ProcessingPipeline = StreamAdapter("chain_stream")
+    pipeline_chain.process(stream_data)
 
-    chain_elapsed: float = (time.time() - chain_start) * 1000
-    root_handler.removeFilter(debug_filter)
+    chain_elapsed: float = (time.perf_counter() - chain_start) * 1000
+
     logging.getLogger().setLevel(logging.INFO)
-    logger.info(
-        "Chain result: %d records processed through 3-stage pipeline",
-        len(stream_data),
+    print(
+        f"\nChain result: {len(stream_data)} records "
+        f"processed through 3-stage pipeline",
     )
-    logger.info("Performance: %.2f ms total processing time\n", chain_elapsed)
+    print(f"Performance: {chain_elapsed:.2f} ms total processing time\n")
 
-    logger.info("=== Error Recovery Test ===")
-    logger.info("Simulating pipeline failure...")
+    print("=== Error Recovery Test ===")
+    print("Simulating pipeline failure...")
     manager.process_data(42)
-    logger.info("\nNexus Integration complete. All systems operational.")
+    print("\nNexus Integration complete. All systems operational.")
 
 
 def main() -> None:
     logging.basicConfig(
-        level=logging.INFO, format="%(message)s", stream=sys.stdout
+        level=logging.INFO,
+        format="[%(levelname)s] %(message)s",
+        stream=sys.stdout,
     )
     demo_pipeline_system()
 

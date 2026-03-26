@@ -15,6 +15,7 @@ class DataStream(ABC):
     def process_batch(self, data_batch: List[Any]) -> str:
         self._require_batch(data_batch)
         self.data_count = 0
+        return f"{self.data_count} processed"
 
     def _require_batch(self, data_batch: Any) -> List[Any]:
         if not isinstance(data_batch, list):
