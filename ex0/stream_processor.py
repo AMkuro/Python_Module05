@@ -19,8 +19,8 @@ class DataProcessor(ABC):
     def ensure_validate(self, data: Any) -> None:
         if not self.validate(data):
             raise ValueError(
-                f"[{self.__class__.__name__}] Validation failed for "
-                f"{type(data).__name__}: {data!r}"
+                f"[{self.__class__.__name__}] Validation failed"
+                f" for {type(data).__name__}: {data!r}"
             )
 
 
@@ -53,7 +53,7 @@ class TextProcessor(DataProcessor):
         word_count: int = len(data.split())
         return (
             f"Processed text: {len(data)} characters, "
-            f"{word_count} {'words' if word_count > 1 else 'word'}"
+            f"{word_count} word{'s' if word_count > 1 else ''}"
         )
 
     def validate(self, data: Any) -> bool:
@@ -91,9 +91,9 @@ def demo(processor: DataProcessor, data: Any) -> None:
     try:
         print(f"Initializing {processor.label}...")
         print(f"Processing data: {data!r}")
-        processed_data: str = processor.process(data)
         if processor.validate(data):
             print(f"Validation: {processor.label} verified")
+        processed_data: str = processor.process(data)
         print(processor.format_output(processed_data), "\n")
     except ValueError as e:
         print(e, "\n")

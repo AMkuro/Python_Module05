@@ -51,8 +51,9 @@ class SensorStream(DataStream):
         parts = item.split(":")
         if len(parts) == 2 and parts[0] == "temp":
             temp = float(parts[1])
-            if math.isfinite(temp):
-                return temp
+            if not math.isfinite(temp):
+                raise ValueError(f"non-finite temperature value: {parts[1]!r}")
+            return temp
         return None
 
     def process_batch(self, data_batch: List[Any]) -> str:
@@ -109,8 +110,9 @@ class TransactionStream(DataStream):
         parts: List[str] = item.split(":")
         if len(parts) == 2 and parts[0] in ("buy", "sell"):
             amount = int(parts[1])
-            if amount >= 0:
-                return (parts[0], amount)
+            if amount < 0:
+                raise ValueError(f"negative transaction amount: {parts[1]!r}")
+            return (parts[0], amount)
         return None
 
     def process_batch(self, data_batch: List[Any]) -> str:
@@ -146,7 +148,7 @@ class TransactionStream(DataStream):
                     continue
                 optype, amount = op
                 signed_amount = amount if optype == "buy" else -amount
-                if signed_amount > 200:
+                if amount > 200:
                     result.append(signed_amount)
             return result
         return super().filter_data(data_batch, criteria)
@@ -247,17 +249,23 @@ def demo_individual_streams() -> None:
             f"Processing {stream.name.lower()} batch:"
             f" [{', '.join(data for data in data_batch)}]"
         )
-        base_keys: set[str] = {"stream_id", "stream_type", "processed_data"}
+        extra_items: List[str] = []
         stats: Dict[str, Union[str, int, float]] = stream.get_stats()
-        extras: List[str] = []
-        for key, value in stats.items():
-            if key not in base_keys:
+        for unique_key, value in stats.items():
+            if unique_key not in {
+                "stream_id",
+                "stream_type",
+                "processed_data",
+            }:
+                format_key: str = unique_key.replace("_", " ")
                 if isinstance(value, str):
-                    extras.append(f"{key.replace('_', ' ')}: {value}")
+                    extra_items.append(f"{format_key}: {value}")
                 else:
-                    extras.append(f"{value} {key.replace('_', ' ')}")
+                    extra_items.append(f"{value} {format_key}")
         msg: str = (
-            f"{batch_result}, {', '.join(extras)}" if extras else batch_result
+            f"{batch_result}, {', '.join(extra_items)}"
+            if extra_items
+            else batch_result
         )
         print(f"{stream.name.capitalize()} analysis: {msg}\n")
 
